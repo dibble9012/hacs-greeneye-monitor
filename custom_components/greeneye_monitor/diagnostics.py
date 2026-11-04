@@ -1,8 +1,15 @@
-"""Diagnostics support for GreenEye Monitor."""
+"""Diagnostics support for GreenEye Monitor.
+
+Only public Home Assistant APIs are used here, so that a change to Home
+Assistant internals can't break downloading diagnostics.
+"""
+from __future__ import annotations
+
 from datetime import datetime
+from datetime import timedelta
+from enum import Enum
 from typing import Any
 
-from greeneye import Monitors
 from greeneye.monitor import Aux
 from greeneye.monitor import Channel
 from greeneye.monitor import GemSettings
@@ -10,137 +17,97 @@ from greeneye.monitor import Monitor
 from greeneye.monitor import PulseCounter
 from greeneye.monitor import TemperatureSensor
 from greeneye.monitor import VoltageSensor
-from homeassistant.components.sensor import SensorEntity
-from homeassistant.config import async_hass_config_yaml
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.core import split_entity_id
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
-from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.entity_component import (
-    DATA_INSTANCES as DATA_ENTITY_COMPONENTS,
-)
-from homeassistant.helpers.entity_component import EntityComponent
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-from homeassistant.helpers.entity_registry import RegistryEntry as EntityRegistryEntry
-from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .const import GreeneyeConfigEntry
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: GreeneyeConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-
-    config = await async_hass_config_yaml(hass)
-    monitors: Monitors = hass.data[DOMAIN]
-
-    return {
-        "current_time": datetime.now().isoformat(),
-        "yaml": config.get(DOMAIN),
-        "config_entry": entry.as_dict(),
-        "monitors": {
-            number: monitor_as_dict(monitor)
-            for number, monitor in monitors.monitors.items()
-        },
-        "entities": entities_as_dict(hass),
-        "issues": issues_as_list(hass),
-        "registries": registries_as_dict(hass),
-    }
-
-
-def entities_as_dict(hass: HomeAssistant) -> dict[str, Any]:
-    er = async_get_entity_registry(hass)
-    return {
-        registry_entry.entity_id: {
-            "registry": registry_entry.as_partial_dict,
-            "entity": entity_as_dict(_get_entity(hass, registry_entry)),
-            "state": hass.states.get(registry_entry.entity_id),
+    monitors: dict[str, Any] | None = None
+    if entry.state is ConfigEntryState.LOADED:
+        monitors = {
+            str(serial_number): monitor_as_dict(monitor)
+            for serial_number, monitor in entry.runtime_data.monitors.items()
         }
-        for registry_entry in er.entities.values()
-        if registry_entry.platform == DOMAIN
-    }
-
-
-def _get_entity(
-    hass: HomeAssistant, registry_entry: EntityRegistryEntry
-) -> Entity | None:
-    domain, _ = split_entity_id(registry_entry.entity_id)
-    component: EntityComponent = hass.data[DATA_ENTITY_COMPONENTS][domain]
-    entity = component.get_entity(registry_entry.entity_id)
-    return entity
-
-
-def entity_as_dict(entity: Entity | None) -> dict[str, Any] | None:
-    if not entity:
-        return None
-    if isinstance(entity, SensorEntity):
-        return sensor_entity_as_dict(entity)
-    return base_entity_as_dict(entity)
-
-
-def sensor_entity_as_dict(entity: SensorEntity) -> dict[str, Any]:
-    return {
-        **base_entity_as_dict(entity),
-        "native_unit_of_measurement": entity.native_unit_of_measurement,
-        "state_class": entity.state_class,
-        "native_value": entity.native_value,
-        "last_reset": entity.last_reset,
-    }
-
-
-def base_entity_as_dict(entity: Entity) -> dict[str, Any]:
-    return {
-        "type": type(entity).__name__,
-        "id": entity.entity_id,
-        "unique_id": entity.unique_id,
-        "name": entity.name,
-        "entity_registry_enabled_default": entity.entity_registry_enabled_default,
-        "has_entity_name": entity.has_entity_name,
-        "should_poll": entity.should_poll,
-        "device_class": entity.device_class,
-        "extra_state_attributes": entity.extra_state_attributes,
-        "icon": entity.icon,
-        "use_device_name": entity.use_device_name,
-        "platform_domain": entity.platform.domain,  # TODO: Remove
-    }
-
-
-def registries_as_dict(hass: HomeAssistant) -> dict[str, Any]:
-    dr = async_get_device_registry(hass)
-    er = async_get_entity_registry(hass)
-    device_ids = {
-        entity.device_id for entity in er.entities.values() if entity.platform == DOMAIN
-    }
 
     return {
-        "devices": {
-            id: device.dict_repr
-            for id, device in dr.devices.items()
-            if device.id in device_ids
-        },
-        "deleted_entities": [
-            {
-                "entity_id": deleted.entity_id,
-                "unique_id": deleted.unique_id,
-                "platform": deleted.platform,
-                "config_entry_id": deleted.config_entry_id,
-                "domain": deleted.domain,
-                "id": deleted.id,
-                "orphaned_timestamp": deleted.orphaned_timestamp,
-            }
-            for deleted in er.deleted_entities.values()
-            if deleted.platform == DOMAIN
-        ],
+        "current_time": dt_util.now().isoformat(),
+        "config_entry": entry.as_dict(),
+        "monitors": monitors,
+        "entities": entities_as_dict(hass, entry),
+        "devices": devices_as_list(hass, entry),
+        "issues": issues_as_list(hass),
     }
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert library types that the diagnostics JSON encoder doesn't know."""
+    if isinstance(value, Enum):
+        return value.name
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _listener_count(source: Any) -> int | None:
+    listeners = getattr(source, "_listeners", None)
+    return len(listeners) if listeners is not None else None
+
+
+def entities_as_dict(
+    hass: HomeAssistant, entry: GreeneyeConfigEntry
+) -> dict[str, Any]:
+    registry = er.async_get(hass)
+    result: dict[str, Any] = {}
+    for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        state = hass.states.get(registry_entry.entity_id)
+        result[registry_entry.entity_id] = {
+            "unique_id": registry_entry.unique_id,
+            "name": registry_entry.name,
+            "original_name": registry_entry.original_name,
+            "disabled_by": registry_entry.disabled_by,
+            "device_id": registry_entry.device_id,
+            "unit_of_measurement": registry_entry.unit_of_measurement,
+            "state": state.as_dict() if state else None,
+        }
+    return result
+
+
+def devices_as_list(
+    hass: HomeAssistant, entry: GreeneyeConfigEntry
+) -> list[dict[str, Any]]:
+    registry = dr.async_get(hass)
+    return [
+        {
+            "id": device.id,
+            "name": device.name,
+            "name_by_user": device.name_by_user,
+            "identifiers": sorted(list(identifier) for identifier in device.identifiers),
+            "via_device_id": device.via_device_id,
+            "disabled_by": device.disabled_by,
+        }
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+    ]
 
 
 def issues_as_list(hass: HomeAssistant) -> list[dict[str, Any]]:
-    ir = async_get_issue_registry(hass)
+    registry = ir.async_get(hass)
     return [
         issue.to_json()
-        for (domain, _), issue in ir.issues.items()
+        for (domain, _), issue in registry.issues.items()
         if domain == DOMAIN and issue.active
     ]
 
@@ -148,8 +115,10 @@ def issues_as_list(hass: HomeAssistant) -> list[dict[str, Any]]:
 def monitor_as_dict(monitor: Monitor) -> dict[str, Any]:
     return {
         "serial_number": monitor.serial_number,
-        "packet_format": monitor.packet_format,
-        "packet_send_interval": monitor.packet_send_interval,
+        "type": _jsonable(monitor.type),
+        "packet_format": _jsonable(monitor.packet_format),
+        "packet_send_interval": _jsonable(monitor.packet_send_interval),
+        "has_control": monitor.control is not None,
         "settings": settings_as_dict(monitor.settings),
         "aux": [aux_as_dict(aux) for aux in monitor.aux],
         "channels": [channel_as_dict(channel) for channel in monitor.channels],
@@ -162,19 +131,17 @@ def monitor_as_dict(monitor: Monitor) -> dict[str, Any]:
             for temperature_sensor in monitor.temperature_sensors
         ],
         "voltage_sensor": voltage_sensor_as_dict(monitor.voltage_sensor),
-        "listeners": len(monitor._listeners),
+        "listeners": _listener_count(monitor),
     }
 
 
 def aux_as_dict(aux: Channel | Aux) -> dict[str, Any]:
-    match aux:
-        case Channel():
-            return channel_as_dict(aux)
-        case Aux():
-            return {
-                "channel": channel_as_dict(aux.channel),
-                "pulse_counter": pulse_counter_as_dict(aux.pulse_counter),
-            }
+    if isinstance(aux, Channel):
+        return channel_as_dict(aux)
+    return {
+        "channel": channel_as_dict(aux.channel),
+        "pulse_counter": pulse_counter_as_dict(aux.pulse_counter),
+    }
 
 
 def channel_as_dict(channel: Channel) -> dict[str, Any]:
@@ -184,13 +151,13 @@ def channel_as_dict(channel: Channel) -> dict[str, Any]:
         "ct_range": channel.ct_range,
         "is_aux": channel.is_aux,
         "net_metering": channel.net_metering,
-        "timestamp": channel.timestamp.isoformat() if channel.timestamp else None,
+        "timestamp": _jsonable(channel.timestamp),
         "seconds": channel.seconds,
         "amps": channel.amps,
         "absolute_watt_seconds": channel.absolute_watt_seconds,
         "polarized_watt_seconds": channel.polarized_watt_seconds,
         "watts": channel.watts,
-        "listeners": len(channel._listeners),
+        "listeners": _listener_count(channel),
     }
 
 
@@ -201,37 +168,35 @@ def pulse_counter_as_dict(pulse_counter: PulseCounter) -> dict[str, Any]:
         "pulses_per_second": pulse_counter.pulses_per_second,
         "seconds": pulse_counter.seconds,
         "is_aux": pulse_counter.is_aux,
-        "listeners": len(pulse_counter._listeners),
+        "listeners": _listener_count(pulse_counter),
     }
 
 
 def settings_as_dict(settings: GemSettings | None) -> dict[str, Any] | None:
-    return (
-        {
-            "num_channels": settings.num_channels,
-            "channel_net_metering": settings.channel_net_metering,
-            "ct_ranges": settings.ct_ranges,
-            "ct_types": settings.ct_types,
-            "packet_format": settings.packet_format,
-            "packet_send_interval": settings.packet_send_interval,
-            "temperature_unit": settings.temperature_unit,
-        }
-        if settings
-        else None
-    )
+    if settings is None:
+        return None
+    return {
+        "num_channels": settings.num_channels,
+        "channel_net_metering": settings.channel_net_metering,
+        "ct_ranges": settings.ct_ranges,
+        "ct_types": settings.ct_types,
+        "packet_format": _jsonable(settings.packet_format),
+        "packet_send_interval": _jsonable(settings.packet_send_interval),
+        "temperature_unit": _jsonable(settings.temperature_unit),
+    }
 
 
 def temperature_sensor_as_dict(temperature_sensor: TemperatureSensor) -> dict[str, Any]:
     return {
         "number": temperature_sensor.number,
         "temperature": temperature_sensor.temperature,
-        "unit": temperature_sensor.unit,
-        "listeners": len(temperature_sensor._listeners),
+        "unit": _jsonable(temperature_sensor.unit),
+        "listeners": _listener_count(temperature_sensor),
     }
 
 
 def voltage_sensor_as_dict(voltage_sensor: VoltageSensor) -> dict[str, Any]:
     return {
         "voltage": voltage_sensor.voltage,
-        "listeners": len(voltage_sensor._listeners),
+        "listeners": _listener_count(voltage_sensor),
     }

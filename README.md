@@ -18,7 +18,7 @@ The [Brultech](https://brultech.com) integration for Home Assistant allows you t
 
 1. Install [HACS](https://hacs.xyz/docs/use/) if you haven't already
 2. Add this repository as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories) for integrations in [HACS](https://hacs.xyz/docs/use/) by using this My button:
-   [![Add repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jkeljo&repository=hacs-greeneye-monitor&category=Integration)
+   [![Add repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dibble9012&repository=hacs-greeneye-monitor&category=Integration)
 3. Further documentation is viewable in HACS, or by clicking [here](info.md)
 
 ## Contributions are welcome!
@@ -36,18 +36,18 @@ Code template was mainly taken from [@Ludeeus](https://github.com/ludeeus)'s [in
 [integration_blueprint]: https://github.com/custom-components/integration_blueprint
 [black]: https://github.com/psf/black
 [black-shield]: https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge
-[commits-shield]: https://img.shields.io/github/commit-activity/y/jkeljo/hacs-greeneye-monitor.svg?style=for-the-badge
-[commits]: https://github.com/jkeljo/hacs-greeneye-monitor/commits/main
+[commits-shield]: https://img.shields.io/github/commit-activity/y/dibble9012/hacs-greeneye-monitor.svg?style=for-the-badge
+[commits]: https://github.com/dibble9012/hacs-greeneye-monitor/commits/main
 [config]: https://my.home-assistant.io/redirect/config_flow_start?domain=brultech
 [config-shield]: https://my.home-assistant.io/badges/config_flow_start.svg
 [hacs]: https://hacs.xyz
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
 [forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
 [forum]: https://community.home-assistant.io/
-[license-shield]: https://img.shields.io/github/license/jkeljo/hacs-greeneye-monitor.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/dibble9012/hacs-greeneye-monitor.svg?style=for-the-badge
 [maintenance-shield]: https://img.shields.io/badge/maintainer-%40jkeljo-blue.svg?style=for-the-badge
 [pre-commit]: https://github.com/pre-commit/pre-commit
 [pre-commit-shield]: https://img.shields.io/badge/pre--commit-enabled-brightgreen?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/jkeljo/hacs-greeneye-monitor.svg?style=for-the-badge
-[releases]: https://github.com/jkeljo/hacs-greeneye-monitor/releases
+[releases-shield]: https://img.shields.io/github/release/dibble9012/hacs-greeneye-monitor.svg?style=for-the-badge
+[releases]: https://github.com/dibble9012/hacs-greeneye-monitor/releases
 [user_profile]: https://github.com/jkeljo

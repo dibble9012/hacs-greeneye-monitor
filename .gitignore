@@ -16,3 +16,4 @@ home-assistant_v2.*
 scenes.yaml
 scripts.yaml
 secrets.yaml
+dist/

@@ -3,7 +3,12 @@
     "flow_title": "{device_name}",
     "abort": {
       "already_configured": "GreenEye Monitor integration is already configured",
-      "success": "Configured energy monitor {serial_number}. The sensors that are frequently updated (such as the power, temperature, and pulse rate sensors) are disabled by default; you can enable them from entity settings."
+      "not_loaded": "The GreenEye Monitor integration must be set up and running before monitors can be added.",
+      "success": "Configured energy monitor {serial_number}. The sensors that are frequently updated (such as the power, current, temperature, and pulse rate sensors) are disabled by default; you can enable them from entity settings."
+    },
+    "error": {
+      "port_in_use": "Home Assistant can't listen on this port. Another program may already be using it.",
+      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class."
     },
     "step": {
       "user": {
@@ -13,8 +18,9 @@
           "port": "Port"
         }
       },
-      "integration_discovery": {
+      "monitor": {
         "title": "Configure new monitor",
+        "description": "{device_name} is sending data to Home Assistant.",
         "data": {
           "aux5_type": "Aux 5 mode",
           "temperature_unit": "Temperature unit",
@@ -30,32 +36,42 @@
         "title": "Configure pulse counter",
         "description": "Specify what pulse counter {pulse_counter_number} is measuring.",
         "data": {
-          "counted_quantity": "What unit is the pulse counter counting?",
-          "counted_quantity_per_pulse": "How many of that unit does each pulse represent?",
-          "device_class": "Device class"
+          "counted_quantity": "Unit counted",
+          "counted_quantity_per_pulse": "Amount per pulse",
+          "device_class": "Device class",
+          "time_unit": "Rate sensor time interval"
         },
         "data_description": {
-          "device_class": "What device class should the entity representing this pulse counter be? Required for use with the energy dashboard."
+          "counted_quantity": "What unit is the pulse counter counting? You can type a unit that isn't in the list.",
+          "counted_quantity_per_pulse": "How many of that unit does each pulse represent?",
+          "device_class": "What device class should the entity representing this pulse counter be? Required for use with the Energy dashboard.",
+          "time_unit": "Select the time interval for reporting pulse rates."
         }
       }
     }
   },
   "options": {
+    "error": {
+      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class."
+    },
     "step": {
-      "options_menu": {
+      "init": {
         "title": "Choose options to edit",
         "menu_options": {
-          "global_options": "Edit global options",
-          "choose_monitor": "Edit per-monitor options"
+          "global_options": "Global options",
+          "monitor_settings": "Monitor settings (net metering, temperature unit, Aux 5)",
+          "pulse_counter_settings": "Pulse counter settings"
         }
       },
       "global_options": {
         "title": "Global options",
         "data": {
+          "energy_update_interval": "Energy sensor update interval",
           "send_packet_delay": "Request packet delay for GEM API calls"
         },
         "data_description": {
-          "send_packet_delay": "Experimental. Leave it False unless a @jkeljo has told you to set it to True."
+          "energy_update_interval": "How often energy and pulse count sensors record a new value. Shorter intervals make hourly Energy dashboard figures more accurate but store more data. 0 records every packet.",
+          "send_packet_delay": "Experimental. Leave this off unless you've been asked to turn it on while troubleshooting."
         }
       },
       "choose_monitor": {
@@ -67,21 +83,41 @@
           "serial_number": "Select the serial number of a monitor to edit its options."
         }
       },
+      "monitor": {
+        "title": "Monitor {serial_number}",
+        "data": {
+          "aux5_type": "Aux 5 mode",
+          "temperature_unit": "Temperature unit",
+          "net_metering": "Channels with net metering"
+        },
+        "data_description": {
+          "aux5_type": "Is Aux 5 measuring current or counting pulses?",
+          "temperature_unit": "What unit of temperature is the monitor configured to use? Find this in the 'Temp Degree' section of the GEM UI.",
+          "net_metering": "Which channels in the monitor are configured for net metering? For GEM, find this in the 'Chan CT' section of the GEM UI."
+        }
+      },
       "choose_pulse_counter": {
         "title": "Monitor {serial_number}",
         "data": {
-          "number": "Pulse counter number"
+          "number": "Pulse counter"
         },
         "data_description": {
-          "number": "Select a pulse counter to edit its options"
+          "number": "Select a pulse counter to edit."
         }
       },
-      "pulse_counter_options": {
+      "pulse_counter": {
         "title": "Pulse counter {pulse_counter_number}",
+        "description": "Specify what pulse counter {pulse_counter_number} on monitor {serial_number} is measuring. Changing the unit or device class may affect long-term statistics for this sensor.",
         "data": {
+          "counted_quantity": "Unit counted",
+          "counted_quantity_per_pulse": "Amount per pulse",
+          "device_class": "Device class",
           "time_unit": "Rate sensor time interval"
         },
         "data_description": {
+          "counted_quantity": "What unit is the pulse counter counting? You can type a unit that isn't in the list.",
+          "counted_quantity_per_pulse": "How many of that unit does each pulse represent?",
+          "device_class": "What device class should the entity representing this pulse counter be? Required for use with the Energy dashboard.",
           "time_unit": "Select the time interval for reporting pulse rates."
         }
       }
@@ -103,10 +139,6 @@
     }
   },
   "issues": {
-    "entity_excluded": {
-      "title": "{entity_id} will not be available in Energy Dashboard",
-      "description": "{entity_id} is excluded from `logger` and/or `recorder`. If you wish to use this entity in the Energy Dashboard, check your YAML configuration for those two components and adjust it so that this entity is not excluded."
-    },
     "remove_yaml": {
       "title": "GreenEye Monitor no longer uses YAML configuration",
       "description": "Greeneye Monitor is now configured via the UI.\n\nYour existing YAML configuration has been imported and is no longer necessary.\n\nRemove the greeneye_monitor section of configuration.yaml and restart Home Assistant to fix this issue."

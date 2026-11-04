@@ -1,176 +1,112 @@
-"""Common fixtures for testing greeneye_monitor."""
+"""Common fixtures for testing greeneye_monitor.
+
+These tests run the real greeneye library and talk to it over TCP the same way a
+monitor does, using packets captured from real monitors.
+"""
+from __future__ import annotations
+
+import asyncio
+import socket
+from collections.abc import AsyncGenerator
+from collections.abc import Callable
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
-from unittest.mock import patch
 
 import pytest
-from custom_components.greeneye_monitor import DOMAIN
-from custom_components.greeneye_monitor.sensor import MonitorSensor
-from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.const import UnitOfElectricCurrent
-from homeassistant.const import UnitOfElectricPotential
-from homeassistant.const import UnitOfEnergy
-from homeassistant.const import UnitOfPower
+import siobrultech_protocols.gem.api
+from custom_components.greeneye_monitor.const import CONF_MONITORS
+from custom_components.greeneye_monitor.const import CONF_SEND_PACKET_DELAY
+from custom_components.greeneye_monitor.const import CONFIG_ENTRY_TITLE
+from custom_components.greeneye_monitor.const import DOMAIN
+from homeassistant.const import CONF_PORT
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity_registry import async_get as get_entity_registry
-from homeassistant.helpers.entity_registry import RegistryEntry
-from homeassistant.util import slugify
-
-from .common import add_listeners
-
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
+# Serial numbers of the monitors that sent the captured packets
+GEM_SERIAL_NUMBER = 1100603
+ECM_SERIAL_NUMBER = 500434
+
 
 @pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(hass, enable_custom_integrations):
-    """Allow custom integrations to load"""
-    yield
+def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
+    """Allow custom integrations to load."""
 
 
 @pytest.fixture(autouse=True)
-def enable_all_entities(monkeypatch):
-    monkeypatch.setattr(MonitorSensor, "_attr_entity_registry_enabled_default", True)
-
-
-def assert_sensor_state(
-    hass: HomeAssistant,
-    entity_id: str,
-    expected_state: str,
-    attributes: dict[str, Any] = {},
-) -> None:
-    """Assert that the given entity has the expected state and at least the provided attributes."""
-    state = hass.states.get(entity_id)
-    assert state
-    actual_state = state.state
-    assert actual_state == expected_state
-    for key, value in attributes.items():
-        assert key in state.attributes
-        assert state.attributes[key] == value
-
-
-def assert_temperature_sensor_registered(
-    hass: HomeAssistant,
-    serial_number: int,
-    number: int,
-    name: str,
-):
-    """Assert that a temperature sensor entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "temperature", "temp", number, name
+def fast_api_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Don't wait 15 seconds for our fake monitors to answer API calls."""
+    monkeypatch.setattr(
+        siobrultech_protocols.gem.api, "TIMEOUT", timedelta(milliseconds=100)
     )
-    assert sensor.original_device_class is SensorDeviceClass.TEMPERATURE
-
-
-def assert_pulse_counter_registered(
-    hass: HomeAssistant,
-    serial_number: int,
-    number: int,
-    name: str,
-    quantity: str,
-    per_time: str,
-) -> RegistryEntry:
-    """Assert that a pulse counter entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "pulse counter", "pulse", number, name
-    )
-    assert sensor.unit_of_measurement == f"{quantity}/{per_time}"
-    return sensor
-
-
-def assert_power_sensor_registered(
-    hass: HomeAssistant, serial_number: int, number: int, name: str
-) -> None:
-    """Assert that a power sensor entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "channel", "current", number, name
-    )
-    assert sensor.unit_of_measurement == UnitOfPower.WATT
-    assert sensor.original_device_class is SensorDeviceClass.POWER
-
-
-def assert_energy_sensor_registered(
-    hass: HomeAssistant, serial_number: int, number: int, name: str
-) -> None:
-    """Assert that a power sensor entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "channel", "energy", number, name
-    )
-    assert sensor.unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
-    assert sensor.original_device_class is SensorDeviceClass.ENERGY
-
-
-def assert_current_sensor_registered(
-    hass: HomeAssistant, serial_number: int, number: int, name: str
-) -> None:
-    """Assert that a power sensor entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "channel", "amps", number, name
-    )
-    assert sensor.unit_of_measurement == UnitOfElectricCurrent.AMPERE
-    assert sensor.original_device_class is SensorDeviceClass.CURRENT
-
-
-def assert_voltage_sensor_registered(
-    hass: HomeAssistant, serial_number: int, number: int, name: str
-) -> None:
-    """Assert that a voltage sensor entity was registered properly."""
-    sensor = assert_sensor_registered(
-        hass, serial_number, "voltage", "volts", number, name
-    )
-    assert sensor.unit_of_measurement == UnitOfElectricPotential.VOLT
-    assert sensor.original_device_class is SensorDeviceClass.VOLTAGE
-
-
-def assert_sensor_registered(
-    hass: HomeAssistant,
-    serial_number: int,
-    device_type: str,
-    sensor_type: str,
-    number: int,
-    name: str,
-) -> RegistryEntry:
-    """Assert that a sensor entity of a given type was registered properly."""
-    registry = get_entity_registry(hass)
-    unique_id = f"{serial_number}-{sensor_type}-{number}"
-
-    entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-    assert entity_id is not None
-
-    sensor = registry.async_get(entity_id)
-    assert sensor
-    assert sensor.unique_id == unique_id
-    assert sensor.entity_id == f"sensor.{slugify(name)}"
-
-    device_registry = dr.async_get(hass)
-    assert sensor.device_id is not None
-    device = device_registry.async_get(sensor.device_id)
-    assert device is not None
-    assert device.name == f"GEM {serial_number} {device_type} {number}"
-
-    assert device.via_device_id is not None
-    via_device = device_registry.async_get(device.via_device_id)
-    assert via_device is not None
-    assert via_device.name == f"GEM {serial_number}"
-    assert via_device.manufacturer == "Brultech"
-
-    return sensor
 
 
 @pytest.fixture
-def monitors() -> AsyncMock:
-    """Provide a mock greeneye.Monitors object that has listeners and can add new monitors."""
-    with patch("greeneye.Monitors", new=AsyncMock) as mock_monitors:
-        add_listeners(mock_monitors)
-        mock_monitors.monitors = {}
+def port(socket_enabled: None) -> int:
+    """Return a TCP port that nothing is listening on."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
-        async def add_monitor(monitor: MagicMock) -> None:
-            """Add the given mock monitor as a monitor with the given serial number, notifying any listeners on the Monitors object."""
-            serial_number = monitor.serial_number
-            mock_monitors.monitors[serial_number] = monitor
-            await mock_monitors.notify_all_listeners(monitor)
 
-        mock_monitors.add_monitor = add_monitor
-        yield mock_monitors
+@pytest.fixture
+async def setup_components(hass: HomeAssistant) -> None:
+    """Set up the components that serve the flow and diagnostics HTTP APIs."""
+    assert await async_setup_component(hass, "config", {})
+    assert await async_setup_component(hass, "diagnostics", {})
+
+
+def make_entry(
+    port: int,
+    monitors: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
+) -> MockConfigEntry:
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title=CONFIG_ENTRY_TITLE,
+        unique_id=DOMAIN,
+        data={CONF_PORT: port, CONF_MONITORS: monitors or []},
+        options=options or {CONF_SEND_PACKET_DELAY: False, CONF_MONITORS: []},
+    )
+
+
+class FakeMonitor:
+    """Sends captured packets to the integration like a real monitor would."""
+
+    def __init__(self, port: int) -> None:
+        self._port = port
+        self._writer: asyncio.StreamWriter | None = None
+
+    async def send(self, fixture: str) -> None:
+        if self._writer is None or self._writer.is_closing():
+            _, self._writer = await asyncio.open_connection("127.0.0.1", self._port)
+        self._writer.write((FIXTURES / fixture).read_bytes())
+        await self._writer.drain()
+
+    async def disconnect(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except ConnectionError:
+                pass
+            self._writer = None
+
+
+@pytest.fixture
+async def fake_monitor(port: int) -> AsyncGenerator[FakeMonitor]:
+    monitor = FakeMonitor(port)
+    yield monitor
+    await monitor.disconnect()
+
+
+async def wait_for(condition: Callable[[], Any], timeout: float = 5) -> None:
+    """Wait for something the library does on its own task to happen."""
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.02)
