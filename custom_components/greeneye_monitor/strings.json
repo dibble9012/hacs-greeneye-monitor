@@ -4,11 +4,12 @@
     "abort": {
       "already_configured": "GreenEye Monitor integration is already configured",
       "not_loaded": "The GreenEye Monitor integration must be set up and running before monitors can be added.",
-      "success": "Configured energy monitor {serial_number}. The sensors that are frequently updated (such as the power, current, temperature, and pulse rate sensors) are disabled by default; you can enable them from entity settings."
+      "success": "Configured energy monitor {serial_number}. The sensors that are frequently updated (such as the power, current, and pulse rate sensors) are disabled by default; you can enable them from entity settings."
     },
     "error": {
       "port_in_use": "Home Assistant can't listen on this port. Another program may already be using it.",
-      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class."
+      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class.",
+      "temperature_unit_required": "Choose a temperature unit to use temperature sensors."
     },
     "step": {
       "user": {
@@ -20,16 +21,20 @@
       },
       "monitor": {
         "title": "Configure new monitor",
-        "description": "{device_name} is sending data to Home Assistant.",
+        "description": "{device_name} is sending data to Home Assistant. Energy sensors are set up for every channel. Only select pulse counters and temperature sensors if you have them connected; you can change this later under Configure.",
         "data": {
-          "aux5_type": "Aux 5 mode",
+          "net_metering": "Channels with net metering",
+          "pulse_counters": "Pulse counters in use",
+          "temperature_sensors": "Temperature sensors in use",
           "temperature_unit": "Temperature unit",
-          "net_metering": "Channels with net metering"
+          "aux5_type": "Aux 5 mode"
         },
         "data_description": {
           "aux5_type": "Is Aux 5 measuring current or counting pulses?",
-          "temperature_unit": "What unit of temperature is the monitor configured to use? Find this in the 'Temp Degree' section of the GEM UI. Note: this might be different from what Home Assistant is configured to use.",
-          "net_metering": "Which channels in the monitor are configured for net metering? For GEM, find this in the 'Chan CT' section of the GEM UI."
+          "temperature_unit": "Only used with temperature sensors. Match the 'Temp Degree' setting in the GEM UI, which might differ from Home Assistant's unit.",
+          "net_metering": "Which channels in the monitor are configured for net metering? For GEM, find this in the 'Chan CT' section of the GEM UI.",
+          "pulse_counters": "Leave empty if nothing is connected to the monitor's pulse inputs.",
+          "temperature_sensors": "Leave empty if no temperature probes are connected."
         }
       },
       "pulse_counter": {
@@ -52,14 +57,15 @@
   },
   "options": {
     "error": {
-      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class."
+      "unit_not_valid_for_device_class": "The unit being counted isn't valid for this device class.",
+      "temperature_unit_required": "Choose a temperature unit to use temperature sensors."
     },
     "step": {
       "init": {
         "title": "Choose options to edit",
         "menu_options": {
           "global_options": "Global options",
-          "monitor_settings": "Monitor settings (net metering, temperature unit, Aux 5)",
+          "monitor_settings": "Monitor settings (inputs in use, net metering, Aux 5)",
           "pulse_counter_settings": "Pulse counter settings"
         }
       },
@@ -86,15 +92,20 @@
       "monitor": {
         "title": "Monitor {serial_number}",
         "data": {
-          "aux5_type": "Aux 5 mode",
+          "net_metering": "Channels with net metering",
+          "pulse_counters": "Pulse counters in use",
+          "temperature_sensors": "Temperature sensors in use",
           "temperature_unit": "Temperature unit",
-          "net_metering": "Channels with net metering"
+          "aux5_type": "Aux 5 mode"
         },
         "data_description": {
           "aux5_type": "Is Aux 5 measuring current or counting pulses?",
-          "temperature_unit": "What unit of temperature is the monitor configured to use? Find this in the 'Temp Degree' section of the GEM UI.",
-          "net_metering": "Which channels in the monitor are configured for net metering? For GEM, find this in the 'Chan CT' section of the GEM UI."
-        }
+          "temperature_unit": "Only used with temperature sensors. Match the 'Temp Degree' setting in the GEM UI, which might differ from Home Assistant's unit.",
+          "net_metering": "Which channels in the monitor are configured for net metering? For GEM, find this in the 'Chan CT' section of the GEM UI.",
+          "pulse_counters": "Leave empty if nothing is connected to the monitor's pulse inputs.",
+          "temperature_sensors": "Leave empty if no temperature probes are connected."
+        },
+        "description": "Clearing a pulse counter or temperature sensor deletes its entities and device from Home Assistant."
       },
       "choose_pulse_counter": {
         "title": "Monitor {serial_number}",
@@ -108,6 +119,22 @@
       "pulse_counter": {
         "title": "Pulse counter {pulse_counter_number}",
         "description": "Specify what pulse counter {pulse_counter_number} on monitor {serial_number} is measuring. Changing the unit or device class may affect long-term statistics for this sensor.",
+        "data": {
+          "counted_quantity": "Unit counted",
+          "counted_quantity_per_pulse": "Amount per pulse",
+          "device_class": "Device class",
+          "time_unit": "Rate sensor time interval"
+        },
+        "data_description": {
+          "counted_quantity": "What unit is the pulse counter counting? You can type a unit that isn't in the list.",
+          "counted_quantity_per_pulse": "How many of that unit does each pulse represent?",
+          "device_class": "What device class should the entity representing this pulse counter be? Required for use with the Energy dashboard.",
+          "time_unit": "Select the time interval for reporting pulse rates."
+        }
+      },
+      "new_pulse_counter": {
+        "title": "Pulse counter {pulse_counter_number}",
+        "description": "Specify what pulse counter {pulse_counter_number} is measuring.",
         "data": {
           "counted_quantity": "Unit counted",
           "counted_quantity_per_pulse": "Amount per pulse",

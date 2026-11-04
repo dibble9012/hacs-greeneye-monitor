@@ -61,7 +61,7 @@ async def test_unconfigured_pulse_counter_is_skipped(
     fake_monitor: FakeMonitor,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Missing pulse counter config used to crash setup with an assertion."""
+    """A pulse counter that isn't in use gets no entities, and no log noise."""
     data = {**LEGACY_GEM_DATA, "pulse_counters": LEGACY_GEM_DATA["pulse_counters"][:2]}
     options = {**LEGACY_GEM_OPTIONS, CONF_MONITORS: []}
     entry = make_entry(port, [data], options)
@@ -71,6 +71,6 @@ async def test_unconfigured_pulse_counter_is_skipped(
     await _wait_for_entities(hass, ENERGY)
     assert hass.states.get("sensor.gem_1100603_pulse_counter_2") is not None
     assert hass.states.get("sensor.gem_1100603_pulse_counter_3") is None
-    assert "Pulse counter 3 on monitor 1100603 is not configured" in caplog.text
+    assert "Pulse counter" not in caplog.text
 
     await _unload(hass, entry)

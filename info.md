@@ -30,20 +30,20 @@ This integration creates entities as follows.
 
 Each current transformer channel will appear as a device with associated sensors for three different values:
 
-- Energy (kWh) - this sensor is updated only once every 30 minutes and is usable with the Energy Dashboard
+- Energy (kWh) - this sensor is updated only at the energy update interval (5 minutes by default, set with the Configure button) and is usable with the Energy Dashboard
 - Power (kW) - disabled by default
 - Current (amps) - disabled by default, not created for ECM-1240 Aux channels
 
 ### Pulse counter channels
 
-Each pulse counter channel will appear as a device with associated sensors for two different values:
+Pulse counters are optional. Each one you select during setup, or later with the Configure button, will appear as a device with associated sensors for two different values:
 
-- Pulse count - this sensor is updated only once every 30 minutes. The units and device type of this sensor are configured during setup of the integration. If a device type is set, this sensor may be used with the Energy Dashboard.
+- Pulse count - this sensor is updated at the energy update interval (5 minutes by default, set with the Configure button). The units and device type of this sensor are configured during setup of the integration. If a device type is set, this sensor may be used with the Energy Dashboard.
 - Pulse rate - disabled by default. This sensor is updated as fast as the monitor sends new packets, and by default reports a rate as units per second. Units per minute or per hour may be selected after setup by clicking the Configure button in the integration.
 
 ### Temperature channels
 
-Each temperature channel will appear as a device with a single a temperature sensor, disabled by default.
+Temperature sensors are optional. Each one you select during setup, or later with the Configure button, will appear as a device with a single temperature sensor. Monitors set up with an earlier version keep all eight, disabled by default, until you change them.
 
 ### Voltage channels
 

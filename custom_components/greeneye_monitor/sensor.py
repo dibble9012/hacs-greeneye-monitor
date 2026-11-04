@@ -34,6 +34,7 @@ from .const import CONF_NET_METERING
 from .const import CONF_NUMBER
 from .const import CONF_PULSE_COUNTERS
 from .const import CONF_SERIAL_NUMBER
+from .const import CONF_TEMPERATURE_SENSORS
 from .const import CONF_TIME_UNIT
 from .const import DEFAULT_ENERGY_UPDATE_INTERVAL
 from .const import DEVICE_TYPE_AUX
@@ -130,11 +131,7 @@ def _make_entities(
             monitor_config.get(CONF_PULSE_COUNTERS, []), CONF_NUMBER, pulse_counter.number
         )
         if config is None:
-            _LOGGER.warning(
-                "Pulse counter %s on monitor %d is not configured; skipping it",
-                "Aux 5" if pulse_counter.is_aux else pulse_counter.number + 1,
-                monitor.serial_number,
-            )
+            # This input isn't in use
             return
         options = _find(
             monitor_option[CONF_PULSE_COUNTERS], CONF_NUMBER, pulse_counter.number
@@ -166,9 +163,20 @@ def _make_entities(
         add_pulse_counter(pulse_counter)
 
     if temperature_unit := monitor_config.get(CONF_TEMPERATURE_UNIT):
+        # Entries that predate choosing sensors have all of them, disabled by
+        # default. Sensors the user chose should just work.
+        in_use = monitor_config.get(CONF_TEMPERATURE_SENSORS)
         for temperature_sensor in monitor.temperature_sensors:
+            if in_use is not None and str(temperature_sensor.number) not in in_use:
+                continue
             entities.append(
-                TemperatureSensor(monitor, device_id, temperature_sensor, temperature_unit)
+                TemperatureSensor(
+                    monitor,
+                    device_id,
+                    temperature_sensor,
+                    temperature_unit,
+                    enabled_by_default=in_use is not None,
+                )
             )
 
     if monitor.voltage_sensor:
@@ -461,6 +469,7 @@ class TemperatureSensor(MonitorSensor):
         monitor_device_id: str,
         sensor: greeneye.monitor.TemperatureSensor,
         unit: str,
+        enabled_by_default: bool,
     ) -> None:
         """Construct the entity."""
         super().__init__(
@@ -473,6 +482,7 @@ class TemperatureSensor(MonitorSensor):
         )
         self._sensor: greeneye.monitor.TemperatureSensor = sensor
         self._attr_native_unit_of_measurement = unit
+        self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
     def native_value(self) -> float | None:

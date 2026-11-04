@@ -34,6 +34,13 @@ from .conftest import wait_for
 FLOW_URL = "/api/config/config_entries/flow"
 OPTIONS_FLOW_URL = "/api/config/config_entries/options/flow"
 
+GEM_MONITOR_FIELDS = {
+    "net_metering",
+    "pulse_counters",
+    "temperature_sensors",
+    "temperature_unit",
+}
+
 PULSE_COUNTER_DEFAULTS = {
     "counted_quantity": "pulses",
     "counted_quantity_per_pulse": 1,
@@ -164,10 +171,22 @@ async def test_discover_gem(
     result = await _get(client, url)
     assert result["step_id"] == "monitor"
     fields = {field["name"] for field in result["data_schema"]}
-    assert fields == {"net_metering", "temperature_unit"}
+    assert fields == GEM_MONITOR_FIELDS
+
+    # Temperature sensors need a unit
+    result = await _post(client, url, {"temperature_sensors": ["0"]})
+    assert result["step_id"] == "monitor"
+    assert result["errors"] == {"temperature_unit": "temperature_unit_required"}
 
     result = await _post(
-        client, url, {"net_metering": ["2", "0"], "temperature_unit": "°F"}
+        client,
+        url,
+        {
+            "net_metering": ["2", "0"],
+            "temperature_unit": "°F",
+            "temperature_sensors": ["1"],
+            "pulse_counters": ["0", "1", "2", "3"],
+        },
     )
     assert result["step_id"] == "pulse_counter"
     assert result["description_placeholders"] == {"pulse_counter_number": "1"}
@@ -233,6 +252,9 @@ async def test_discover_gem(
 
     # Chatty sensors are disabled by default
     entity_registry = er.async_get(hass)
+    # A temperature sensor the user chose is enabled, and the others don't exist
+    assert hass.states.get("sensor.gem_1100603_temperature_2") is not None
+    assert entity_registry.async_get("sensor.gem_1100603_temperature_1") is None
     power = entity_registry.async_get("sensor.gem_1100603_channel_1")
     assert power.unique_id == f"{GEM_SERIAL_NUMBER}-current-1"
     assert power.disabled_by is er.RegistryEntryDisabler.INTEGRATION
@@ -252,6 +274,249 @@ async def test_discover_gem(
     assert "via_device" not in caplog.text
 
     await _unload(hass, entry)
+
+
+async def test_discover_energy_only_gem(
+    hass: HomeAssistant,
+    setup_components: None,
+    hass_client,
+    port: int,
+    fake_monitor: FakeMonitor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A GEM with only CTs takes one form and gets no other input entities."""
+    entry = make_entry(port)
+    await _setup_entry(hass, entry)
+    client = await hass_client()
+
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    flow = await _wait_for_discovery(hass)
+    url = f"{FLOW_URL}/{flow['flow_id']}"
+
+    # Accepting the form as the frontend prefills it finishes setup
+    result = await _get(client, url)
+    suggested = {
+        field["name"]: field["description"]["suggested_value"]
+        for field in result["data_schema"]
+        if "description" in field
+    }
+    assert suggested == {"temperature_unit": "°C", "net_metering": []}
+    result = await _post(client, url, suggested)
+    assert result["type"] == "abort"
+    assert result["reason"] == "success"
+    await hass.async_block_till_done()
+
+    monitor_data = entry.data[CONF_MONITORS][0]
+    assert monitor_data["pulse_counters"] == []
+    assert monitor_data["temperature_sensors"] == []
+    assert entry.options[CONF_MONITORS][0]["pulse_counters"] == []
+
+    await fake_monitor.disconnect()
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    await _wait_for_entities(hass, "sensor.gem_1100603_channel_48_energy")
+
+    entity_registry = er.async_get(hass)
+    unique_ids = {
+        registry_entry.unique_id
+        for registry_entry in er.async_entries_for_config_entry(
+            entity_registry, entry.entry_id
+        )
+    }
+    assert f"{GEM_SERIAL_NUMBER}-energy-48" in unique_ids
+    assert not [
+        unique_id
+        for unique_id in unique_ids
+        if "-pulse-" in unique_id or "-count-" in unique_id or "-temp-" in unique_id
+    ]
+    device_identifiers = {
+        identifier
+        for device in dr.async_entries_for_config_entry(
+            dr.async_get(hass), entry.entry_id
+        )
+        for _, identifier in device.identifiers
+    }
+    assert not [
+        identifier
+        for identifier in device_identifiers
+        if "pulse counter" in identifier or "temperature" in identifier
+    ]
+    assert "greeneye_monitor" not in {
+        record.name.split(".")[1]
+        for record in caplog.records
+        if record.levelname == "WARNING" and record.name.startswith("custom_components.")
+    }
+
+    # Options still work, and there's nothing to edit for pulse counters
+    result = await _post(client, OPTIONS_FLOW_URL, {"handler": entry.entry_id})
+    assert result["menu_options"] == ["global_options", "monitor_settings"]
+
+    await _unload(hass, entry)
+
+
+async def test_change_inputs_in_use(
+    hass: HomeAssistant,
+    setup_components: None,
+    hass_client,
+    port: int,
+    fake_monitor: FakeMonitor,
+) -> None:
+    """Clearing inputs on an existing monitor removes them; selecting adds them."""
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    data = {
+        **LEGACY_GEM_DATA,
+        "pulse_counters": LEGACY_GEM_DATA["pulse_counters"][:3],
+    }
+    options = {
+        **LEGACY_GEM_OPTIONS,
+        "monitors": [
+            {
+                "serial_number": GEM_SERIAL_NUMBER,
+                "pulse_counters": LEGACY_GEM_OPTIONS["monitors"][0]["pulse_counters"][:3],
+            }
+        ],
+    }
+    entry = make_entry(port, [data], options)
+    await _setup_entry(hass, entry)
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    await _wait_for_entities(hass, "sensor.gem_1100603_pulse_counter_2")
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    assert entity_registry.async_get("sensor.gem_1100603_temperature_3") is not None
+
+    client = await hass_client()
+    result = await _post(client, OPTIONS_FLOW_URL, {"handler": entry.entry_id})
+    url = f"{OPTIONS_FLOW_URL}/{result['flow_id']}"
+    result = await _post(client, url, {"next_step_id": "monitor_settings"})
+
+    # What's in use now is preselected: an old entry has all temperature sensors
+    suggested = {
+        field["name"]: field["description"]["suggested_value"]
+        for field in result["data_schema"]
+        if "description" in field
+    }
+    assert suggested["pulse_counters"] == ["0", "1", "2"]
+    assert suggested["temperature_sensors"] == [str(n) for n in range(8)]
+
+    # Keep pulse counter 1, drop 2 and 3, add 4, and keep only temperature sensor 2
+    result = await _post(
+        client,
+        url,
+        {
+            "temperature_unit": "°C",
+            "pulse_counters": ["0", "3"],
+            "temperature_sensors": ["1"],
+        },
+    )
+    assert result["step_id"] == "new_pulse_counter"
+    assert result["description_placeholders"] == {"pulse_counter_number": "4"}
+
+    # Nothing is saved or removed until the flow finishes
+    assert len(entry.data[CONF_MONITORS][0]["pulse_counters"]) == 3
+    assert entity_registry.async_get("sensor.gem_1100603_pulse_counter_2") is not None
+
+    result = await _post(
+        client,
+        url,
+        {
+            "counted_quantity": "gal",
+            "counted_quantity_per_pulse": 0.5,
+            "device_class": "water",
+            "time_unit": "min",
+        },
+    )
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+
+    monitor_data = entry.data[CONF_MONITORS][0]
+    assert [pc["number"] for pc in monitor_data["pulse_counters"]] == [0, 3]
+    assert monitor_data["temperature_sensors"] == ["1"]
+    assert [
+        pc["number"] for pc in entry.options[CONF_MONITORS][0]["pulse_counters"]
+    ] == [0, 3]
+
+    for removed in (
+        "sensor.gem_1100603_pulse_counter_2",
+        "sensor.gem_1100603_pulse_counter_2_rate",
+        "sensor.gem_1100603_pulse_counter_3",
+        "sensor.gem_1100603_temperature_1",
+        "sensor.gem_1100603_temperature_3",
+    ):
+        assert entity_registry.async_get(removed) is None, removed
+    for identifier in (f"{GEM_SERIAL_NUMBER}-pulse counter-2", f"{GEM_SERIAL_NUMBER}-temperature-1"):
+        assert not device_registry.async_get_devices(
+            identifiers={(DOMAIN, identifier)}, config_entry_id=entry.entry_id
+        )
+    # Inputs that stayed are untouched
+    assert entity_registry.async_get("sensor.gem_1100603_pulse_counter_1") is not None
+    assert entity_registry.async_get("sensor.gem_1100603_temperature_2") is not None
+
+    await fake_monitor.disconnect()
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    await _wait_for_entities(hass, "sensor.gem_1100603_pulse_counter_4")
+    await _wait_for_entities(hass, "sensor.gem_1100603_pulse_counter_1")
+    assert hass.states.get("sensor.gem_1100603_pulse_counter_4").attributes[
+        "device_class"
+    ] == "water"
+    assert entity_registry.async_get("sensor.gem_1100603_pulse_counter_2") is None
+
+    await _unload(hass, entry)
+
+
+async def test_custom_entity_ids_survive_removing_the_entry(
+    hass: HomeAssistant,
+    setup_components: None,
+    hass_client,
+    port: int,
+    fake_monitor: FakeMonitor,
+) -> None:
+    """Deleting the entry and setting up again restores renamed entities."""
+    entry = make_entry(port, [LEGACY_GEM_DATA], LEGACY_GEM_OPTIONS)
+    await _setup_entry(hass, entry)
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    await _wait_for_entities(hass, "sensor.gem_1100603_channel_5_energy")
+
+    entity_registry = er.async_get(hass)
+    entity_registry.async_update_entity(
+        "sensor.gem_1100603_channel_5_energy",
+        new_entity_id="sensor.garage_cb_05_energy",
+        name="CB 05",
+    )
+    await hass.async_block_till_done()
+    await fake_monitor.disconnect()
+
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entity_registry.async_get("sensor.garage_cb_05_energy") is None
+
+    # Set up again from scratch, energy sensors only
+    client = await hass_client()
+    result = await _post(client, FLOW_URL, {"handler": DOMAIN})
+    result = await _post(client, f"{FLOW_URL}/{result['flow_id']}", {"port": port})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    new_entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert new_entry.entry_id != entry.entry_id
+
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    flow = await _wait_for_discovery(hass)
+    result = await _post(client, f"{FLOW_URL}/{flow['flow_id']}", {})
+    assert result["reason"] == "success"
+    await hass.async_block_till_done()
+    await fake_monitor.disconnect()
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+
+    await _wait_for_entities(hass, "sensor.garage_cb_05_energy")
+    restored = entity_registry.async_get("sensor.garage_cb_05_energy")
+    assert restored.unique_id == f"{GEM_SERIAL_NUMBER}-energy-5"
+    assert restored.name == "CB 05"
+    assert restored.config_entry_id == new_entry.entry_id
+    # No duplicate was made under the default ID
+    assert entity_registry.async_get("sensor.gem_1100603_channel_5_energy") is None
+    # Inputs not selected this time don't come back
+    assert entity_registry.async_get("sensor.gem_1100603_pulse_counter_1") is None
+
+    await _unload(hass, new_entry)
 
 
 async def test_discover_ecm_1240(
@@ -396,9 +661,16 @@ async def test_entry_from_previous_version(
     result = await _post(client, url, {"next_step_id": "monitor_settings"})
     assert result["step_id"] == "monitor"
     fields = {field["name"] for field in result["data_schema"]}
-    assert fields == {"net_metering", "temperature_unit"}
+    assert fields == GEM_MONITOR_FIELDS
     result = await _post(
-        client, url, {"net_metering": ["5", "1"], "temperature_unit": "°F"}
+        client,
+        url,
+        {
+            "net_metering": ["5", "1"],
+            "temperature_unit": "°F",
+            "pulse_counters": ["0", "1", "2", "3"],
+            "temperature_sensors": [str(n) for n in range(8)],
+        },
     )
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()

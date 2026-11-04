@@ -26,6 +26,7 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.const import UnitOfTime
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.helpers.typing import DiscoveryInfoType
@@ -49,6 +50,8 @@ from .const import CONF_TEMPERATURE_SENSORS
 from .const import CONF_TIME_UNIT
 from .const import CONFIG_ENTRY_TITLE
 from .const import DEFAULT_ENERGY_UPDATE_INTERVAL
+from .const import DEVICE_TYPE_PULSE_COUNTER
+from .const import DEVICE_TYPE_TEMPERATURE_SENSOR
 from .const import DOMAIN
 from .const import get_monitor_type_long_name
 from .const import get_monitor_type_short_name
@@ -58,6 +61,8 @@ from .const import MAX_ENERGY_UPDATE_INTERVAL
 AUX5_PULSE_COUNTER_NUMBER = 4
 DEFAULT_NUM_CHANNELS = 48
 DEFAULT_PORT = 8000
+NUM_PULSE_COUNTERS = 4
+NUM_TEMPERATURE_SENSORS = 8
 
 COUNTED_QUANTITY_OPTIONS = sorted(
     {
@@ -110,6 +115,8 @@ MONITOR_SCHEMA = vol.Schema(
         vol.Required(CONF_SERIAL_NUMBER): cv.positive_int,
         vol.Optional(CONF_NET_METERING, default=[]): [str],
         vol.Optional(CONF_TEMPERATURE_UNIT): vol.Coerce(UnitOfTemperature),
+        # Which sensors are in use. Entries that predate this key use all of them.
+        vol.Optional(CONF_TEMPERATURE_SENSORS): [str],
         vol.Optional(CONF_AUX5_TYPE, default=None): vol.Maybe(
             vol.In([AUX5_TYPE_CT, AUX5_TYPE_PULSE_COUNTER])
         ),
@@ -247,6 +254,50 @@ def _pulse_counter_ui_to_config(
     return data, options
 
 
+def _is_gem(
+    monitor: greeneye.monitor.Monitor | None,
+    monitor_config: dict[str, Any] | None,
+) -> bool:
+    """Return whether this monitor has pulse counters and temperature sensors."""
+    if monitor is not None:
+        return monitor.type == MonitorType.GEM
+    assert monitor_config is not None
+    return (
+        CONF_TEMPERATURE_UNIT in monitor_config
+        or CONF_TEMPERATURE_SENSORS in monitor_config
+    )
+
+
+def _numbered_multi_select(count: int) -> selector.SelectSelector:
+    """Select from inputs labelled from 1, with values numbered from 0."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value=str(i), label=str(i + 1))
+                for i in range(count)
+            ],
+            multiple=True,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _validate_monitor_settings(user_input: dict[str, Any]) -> dict[str, str]:
+    if user_input.get(CONF_TEMPERATURE_SENSORS) and not user_input.get(
+        CONF_TEMPERATURE_UNIT
+    ):
+        return {CONF_TEMPERATURE_UNIT: "temperature_unit_required"}
+    return {}
+
+
+def _temperature_sensors_in_use(monitor_config: dict[str, Any]) -> list[str]:
+    if CONF_TEMPERATURE_SENSORS in monitor_config:
+        return monitor_config[CONF_TEMPERATURE_SENSORS]
+    if CONF_TEMPERATURE_UNIT in monitor_config:
+        return [str(i) for i in range(NUM_TEMPERATURE_SENSORS)]
+    return []
+
+
 def make_monitor_settings_schema(
     monitor: greeneye.monitor.Monitor | None,
     monitor_config: dict[str, Any] | None = None,
@@ -266,28 +317,23 @@ def make_monitor_settings_schema(
             num_channels = max(num_channels, int(channel) + 1)
 
     schema: dict[Any, Any] = {
-        vol.Optional(CONF_NET_METERING): selector.SelectSelector(
-            selector.SelectSelectorConfig(
-                options=[
-                    selector.SelectOptionDict(value=str(i), label=str(i + 1))
-                    for i in range(num_channels)
-                ],
-                multiple=True,
-                mode=selector.SelectSelectorMode.DROPDOWN,
-            )
-        ),
+        vol.Optional(CONF_NET_METERING): _numbered_multi_select(num_channels),
     }
 
     if monitor is not None:
-        show_temperature = monitor.type == MonitorType.GEM
         show_aux5 = monitor.type == MonitorType.ECM_1240
     else:
         assert monitor_config is not None
-        show_temperature = CONF_TEMPERATURE_UNIT in monitor_config
         show_aux5 = monitor_config.get(CONF_AUX5_TYPE) is not None
 
-    if show_temperature:
-        schema[vol.Required(CONF_TEMPERATURE_UNIT)] = selector.SelectSelector(
+    if _is_gem(monitor, monitor_config):
+        schema[vol.Optional(CONF_PULSE_COUNTERS)] = _numbered_multi_select(
+            NUM_PULSE_COUNTERS
+        )
+        schema[vol.Optional(CONF_TEMPERATURE_SENSORS)] = _numbered_multi_select(
+            NUM_TEMPERATURE_SENSORS
+        )
+        schema[vol.Optional(CONF_TEMPERATURE_UNIT)] = selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT]
             )
@@ -474,7 +520,11 @@ class GreeneyeMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
         monitor = self._monitor
         assert monitor is not None
 
+        errors: dict[str, str] = {}
         if user_input is not None:
+            errors = _validate_monitor_settings(user_input)
+
+        if user_input is not None and not errors:
             aux5_type = user_input.get(CONF_AUX5_TYPE)
             self._monitor_data = {
                 CONF_SERIAL_NUMBER: monitor.serial_number,
@@ -485,6 +535,10 @@ class GreeneyeMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._monitor_data[CONF_TEMPERATURE_UNIT] = user_input[
                     CONF_TEMPERATURE_UNIT
                 ]
+            if _is_gem(monitor, None):
+                self._monitor_data[CONF_TEMPERATURE_SENSORS] = sorted(
+                    user_input.get(CONF_TEMPERATURE_SENSORS, []), key=int
+                )
 
             if aux5_type == AUX5_TYPE_PULSE_COUNTER:
                 self._pulse_counters_to_configure = [
@@ -492,8 +546,10 @@ class GreeneyeMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 ]
             else:
                 self._pulse_counters_to_configure = [
-                    (pulse_counter.number, False)
-                    for pulse_counter in monitor.pulse_counters
+                    (number, False)
+                    for number in sorted(
+                        int(number) for number in user_input.get(CONF_PULSE_COUNTERS, [])
+                    )
                 ]
             return await self.async_step_pulse_counter()
 
@@ -501,8 +557,9 @@ class GreeneyeMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="monitor",
             data_schema=self.add_suggested_values_to_schema(
                 make_monitor_settings_schema(monitor),
-                _monitor_settings_defaults(monitor),
+                user_input or _monitor_settings_defaults(monitor),
             ),
+            errors=errors,
             description_placeholders={
                 "serial_number": f"{monitor.serial_number}",
                 "device_name": (
@@ -643,6 +700,10 @@ class GreeneyeMonitorOptionsFlow(OptionsFlow):
         self._serial_number: int | None = None
         self._pulse_counter_number: int | None = None
         self._after_choose_monitor: str = ""
+        self._pending_data: dict[str, Any] = {}
+        self._pending_options: dict[str, Any] = {}
+        self._new_pulse_counters: list[int] = []
+        self._device_identifiers_to_remove: set[str] = set()
 
     @property
     def _monitor_configs(self) -> list[dict[str, Any]]:
@@ -742,14 +803,20 @@ class GreeneyeMonitorOptionsFlow(OptionsFlow):
     async def async_step_monitor(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit net metering, temperature unit and Aux 5 mode for one monitor."""
+        """Edit which inputs are in use and how they're set up for one monitor."""
         assert self._serial_number is not None
         data = deepcopy(dict(self.config_entry.data))
         options = CONFIG_ENTRY_OPTIONS_SCHEMA(deepcopy(dict(self.config_entry.options)))
         monitor_config = _find(data[CONF_MONITORS], CONF_SERIAL_NUMBER, self._serial_number)
         assert monitor_config is not None
+        monitor = self._running_monitor(self._serial_number)
+        is_gem = _is_gem(monitor, monitor_config)
 
+        errors: dict[str, str] = {}
         if user_input is not None:
+            errors = _validate_monitor_settings(user_input)
+
+        if user_input is not None and not errors:
             monitor_config[CONF_NET_METERING] = sorted(
                 user_input.get(CONF_NET_METERING, []), key=int
             )
@@ -761,15 +828,116 @@ class GreeneyeMonitorOptionsFlow(OptionsFlow):
                 monitor_config[CONF_AUX5_TYPE] = user_input[CONF_AUX5_TYPE]
                 if user_input[CONF_AUX5_TYPE] == AUX5_TYPE_PULSE_COUNTER:
                     _ensure_aux5_pulse_counter(monitor_config, options, self._serial_number)
+            if is_gem:
+                self._apply_inputs_in_use(monitor_config, options, user_input)
+
+            self._pending_data = data
+            self._pending_options = options
+            if self._new_pulse_counters:
+                return await self.async_step_new_pulse_counter()
             return self._async_save(data, options)
 
-        monitor = self._running_monitor(self._serial_number)
+        suggested = user_input or {
+            **monitor_config,
+            CONF_PULSE_COUNTERS: [
+                str(pulse_counter[CONF_NUMBER])
+                for pulse_counter in monitor_config[CONF_PULSE_COUNTERS]
+                if not pulse_counter.get(CONF_IS_AUX)
+            ],
+            CONF_TEMPERATURE_SENSORS: _temperature_sensors_in_use(monitor_config),
+        }
+        if is_gem and CONF_TEMPERATURE_UNIT not in suggested:
+            suggested[CONF_TEMPERATURE_UNIT] = _monitor_settings_defaults(monitor)[
+                CONF_TEMPERATURE_UNIT
+            ]
         return self.async_show_form(
             step_id="monitor",
             data_schema=self.add_suggested_values_to_schema(
-                make_monitor_settings_schema(monitor, monitor_config), monitor_config
+                make_monitor_settings_schema(monitor, monitor_config), suggested
             ),
+            errors=errors,
             description_placeholders={"serial_number": str(self._serial_number)},
+        )
+
+    def _apply_inputs_in_use(
+        self,
+        monitor_config: dict[str, Any],
+        options: dict[str, Any],
+        user_input: dict[str, Any],
+    ) -> None:
+        """Update which pulse counters and temperature sensors are configured."""
+        serial_number = monitor_config[CONF_SERIAL_NUMBER]
+        selected = {int(number) for number in user_input.get(CONF_PULSE_COUNTERS, [])}
+        configured = {
+            pulse_counter[CONF_NUMBER]
+            for pulse_counter in monitor_config[CONF_PULSE_COUNTERS]
+            if not pulse_counter.get(CONF_IS_AUX)
+        }
+        self._new_pulse_counters = sorted(selected - configured)
+        removed = configured - selected
+
+        monitor_config[CONF_PULSE_COUNTERS] = [
+            pulse_counter
+            for pulse_counter in monitor_config[CONF_PULSE_COUNTERS]
+            if pulse_counter[CONF_NUMBER] not in removed
+        ]
+        monitor_options = _get_or_add_monitor_options(options, serial_number)
+        monitor_options[CONF_PULSE_COUNTERS] = [
+            pulse_counter
+            for pulse_counter in monitor_options[CONF_PULSE_COUNTERS]
+            if pulse_counter[CONF_NUMBER] not in removed
+        ]
+
+        temperature_sensors = sorted(
+            user_input.get(CONF_TEMPERATURE_SENSORS, []), key=int
+        )
+        removed_temperature_sensors = set(
+            _temperature_sensors_in_use(monitor_config)
+        ) - set(temperature_sensors)
+        monitor_config[CONF_TEMPERATURE_SENSORS] = temperature_sensors
+
+        self._device_identifiers_to_remove = {
+            f"{serial_number}-{DEVICE_TYPE_PULSE_COUNTER}-{number + 1}"
+            for number in removed
+        } | {
+            f"{serial_number}-{DEVICE_TYPE_TEMPERATURE_SENSOR}-{int(number) + 1}"
+            for number in removed_temperature_sensors
+        }
+
+    async def async_step_new_pulse_counter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask what each pulse counter that was just turned on is counting."""
+        assert self._serial_number is not None
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = _validate_pulse_counter(user_input)
+            if not errors:
+                number = self._new_pulse_counters.pop(0)
+                data, options = _pulse_counter_ui_to_config(number, False, user_input)
+                monitor_config = _find(
+                    self._pending_data[CONF_MONITORS],
+                    CONF_SERIAL_NUMBER,
+                    self._serial_number,
+                )
+                assert monitor_config is not None
+                monitor_config[CONF_PULSE_COUNTERS].append(data)
+                _get_or_add_monitor_options(
+                    self._pending_options, self._serial_number
+                )[CONF_PULSE_COUNTERS].append(options)
+
+        if not self._new_pulse_counters:
+            return self._async_save(self._pending_data, self._pending_options)
+
+        return self.async_show_form(
+            step_id="new_pulse_counter",
+            data_schema=self.add_suggested_values_to_schema(
+                PULSE_COUNTER_UI_SCHEMA, user_input or PULSE_COUNTER_UI_DEFAULTS
+            ),
+            errors=errors,
+            description_placeholders={
+                "pulse_counter_number": str(self._new_pulse_counters[0] + 1)
+            },
         )
 
     async def async_step_choose_pulse_counter(
@@ -869,6 +1037,18 @@ class GreeneyeMonitorOptionsFlow(OptionsFlow):
         self, data: dict[str, Any], options: dict[str, Any]
     ) -> ConfigFlowResult:
         """Save data and options together so the entry only reloads once."""
+        # Nothing else cleans up the devices of inputs that are no longer in use.
+        # Removing a device also removes its entities.
+        device_registry = dr.async_get(self.hass)
+        for device in dr.async_entries_for_config_entry(
+            device_registry, self.config_entry.entry_id
+        ):
+            if any(
+                domain == DOMAIN and identifier in self._device_identifiers_to_remove
+                for domain, identifier in device.identifiers
+            ):
+                device_registry.async_remove_device(device.id)
+
         self.hass.config_entries.async_update_entry(
             self.config_entry, data=CONFIG_ENTRY_DATA_SCHEMA(data), options=options
         )

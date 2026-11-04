@@ -1,3 +1,13 @@
+# 2026.11.1
+
+- **Pulse counters and temperature sensors are now opt-in.** Setting up a new GEM takes
+  one form: pick the pulse counters and temperature sensors you have connected, or
+  none, and only those get entities and devices. Sensors you pick start enabled.
+- **Change which inputs are in use later**, under Configure > Monitor settings.
+  Selecting a pulse counter asks what it counts; clearing an input deletes its
+  entities and device. Monitors set up with an earlier version keep all their inputs
+  until you change them.
+
 # 2026.11.0
 
 Requires Home Assistant 2026.8 or newer. Existing config entries, entities and
