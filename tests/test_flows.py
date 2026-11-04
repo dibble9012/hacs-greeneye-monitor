@@ -255,8 +255,15 @@ async def test_discover_gem(
     # A temperature sensor the user chose is enabled, and the others don't exist
     assert hass.states.get("sensor.gem_1100603_temperature_2") is not None
     assert entity_registry.async_get("sensor.gem_1100603_temperature_1") is None
-    power = entity_registry.async_get("sensor.gem_1100603_channel_1")
+    power = entity_registry.async_get("sensor.gem_1100603_channel_1_watts")
     assert power.unique_id == f"{GEM_SERIAL_NUMBER}-current-1"
+    assert power.original_name == "Watts"
+    current = entity_registry.async_get("sensor.gem_1100603_channel_1_current")
+    assert current.unique_id == f"{GEM_SERIAL_NUMBER}-amps-1"
+    assert current.original_name == "Current"
+    energy = entity_registry.async_get("sensor.gem_1100603_channel_1_energy")
+    assert energy.original_name == "Energy"
+    assert hass.states.get(energy.entity_id).name == "GEM 1100603 channel 1 Energy"
     assert power.disabled_by is er.RegistryEntryDisabler.INTEGRATION
 
     # Per-input devices hang off the monitor device

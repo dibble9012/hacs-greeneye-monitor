@@ -261,7 +261,7 @@ class PowerSensor(MonitorSensor):
 
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
-    _attr_name = None
+    _attr_name = "Watts"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
@@ -303,7 +303,7 @@ class CurrentSensor(MonitorSensor):
 
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_name = "current"
+    _attr_name = "Current"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
@@ -334,7 +334,7 @@ class EnergySensor(MonitorSensor):
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_name = "energy"
+    _attr_name = "Energy"
     _attr_state_class = SensorStateClass.TOTAL
     _attr_entity_registry_enabled_default = True
 

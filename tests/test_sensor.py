@@ -4,7 +4,9 @@ from __future__ import annotations
 import pytest
 from custom_components.greeneye_monitor.const import CONF_ENERGY_UPDATE_INTERVAL
 from custom_components.greeneye_monitor.const import CONF_MONITORS
+from custom_components.greeneye_monitor.const import DOMAIN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from .conftest import FakeMonitor
 from .conftest import GEM_SERIAL_NUMBER
@@ -72,5 +74,33 @@ async def test_unconfigured_pulse_counter_is_skipped(
     assert hass.states.get("sensor.gem_1100603_pulse_counter_2") is not None
     assert hass.states.get("sensor.gem_1100603_pulse_counter_3") is None
     assert "Pulse counter" not in caplog.text
+
+    await _unload(hass, entry)
+
+
+async def test_existing_entities_keep_their_ids_when_renamed(
+    hass: HomeAssistant,
+    port: int,
+    fake_monitor: FakeMonitor,
+) -> None:
+    """An entity registered under the old name keeps its ID but gets the new name."""
+    # The old version registered power sensors under the bare device name
+    entity_registry = er.async_get(hass)
+    entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{GEM_SERIAL_NUMBER}-current-1",
+        suggested_object_id="gem_1100603_channel_1",
+        original_name=None,
+    )
+
+    entry = make_entry(port, [LEGACY_GEM_DATA], LEGACY_GEM_OPTIONS)
+    await _setup_entry(hass, entry)
+    await fake_monitor.send("BIN48-NET-TIME.bin")
+    await _wait_for_entities(hass, "sensor.gem_1100603_channel_1")
+
+    state = hass.states.get("sensor.gem_1100603_channel_1")
+    assert state.name == "GEM 1100603 channel 1 Watts"
+    assert entity_registry.async_get("sensor.gem_1100603_channel_1_watts") is None
 
     await _unload(hass, entry)

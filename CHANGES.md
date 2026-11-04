@@ -1,3 +1,10 @@
+# 2026.11.2
+
+- Channel sensors are named **Watts**, **Current** and **Energy**. The power sensor
+  used to take the bare device name. Entity IDs of existing sensors don't change, and
+  names you've customized in Home Assistant are kept. Newly created power sensors get
+  IDs ending in `_watts`.
+
 # 2026.11.1
 
 - **Pulse counters and temperature sensors are now opt-in.** Setting up a new GEM takes
